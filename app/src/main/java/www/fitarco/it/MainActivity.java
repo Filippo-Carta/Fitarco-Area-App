@@ -1,18 +1,26 @@
 package www.fitarco.it;
 
+import android.app.Activity;
+import android.app.DownloadManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.webkit.CookieManager;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 
-import androidx.activity.EdgeToEdge;
+import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultCallback;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -20,60 +28,133 @@ public class MainActivity extends AppCompatActivity {
     private static final String LAST_VISITED_URL_KEY = "last_visited_url";
     private static final String INITIAL_URL = "https://www.fitarco.it/area-riservata.html";
 
+    private ValueCallback<Uri[]> mUploadMessage;
+    private ActivityResultLauncher<Intent> fileChooserLauncher;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
-            Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
-            return insets;
-        });
+
+        // --- Launcher per selezione file ---
+        fileChooserLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                new ActivityResultCallback<ActivityResult>() {
+                    @Override
+                    public void onActivityResult(ActivityResult result) {
+                        if (mUploadMessage == null) return;
+                        Uri[] results = null;
+                        if (result.getResultCode() == Activity.RESULT_OK) {
+                            if (result.getData() != null) {
+                                results = new Uri[]{result.getData().getData()};
+                            }
+                        }
+                        mUploadMessage.onReceiveValue(results);
+                        mUploadMessage = null;
+                    }
+                });
 
         webview1 = findViewById(R.id.webview1);
         WebSettings webSettings = webview1.getSettings();
-
-        // --- Settings to persist login ---
-
-        // 1. Enable JavaScript
         webSettings.setJavaScriptEnabled(true);
-
-        // 2. Configure CookieManager to accept cookies from all domains
-        CookieManager cookieManager = CookieManager.getInstance();
-        cookieManager.setAcceptCookie(true);
-        cookieManager.setAcceptThirdPartyCookies(webview1, true); // Crucial for cross-domain redirects
-
-        // 3. Enable DOM Storage and other necessary features
         webSettings.setDomStorageEnabled(true);
         webSettings.setDatabaseEnabled(true);
         webSettings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        webSettings.setAllowFileAccess(true);
 
-        // --- End of settings ---
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setAcceptCookie(true);
+        cookieManager.setAcceptThirdPartyCookies(webview1, true);
 
-        // Set a custom WebViewClient to track URL changes
+        // --- WebChromeClient per upload file ---
+        webview1.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                if (mUploadMessage != null) {
+                    mUploadMessage.onReceiveValue(null);
+                    mUploadMessage = null;
+                }
+
+                mUploadMessage = filePathCallback;
+
+                Intent intent = fileChooserParams.createIntent();
+                try {
+                    fileChooserLauncher.launch(intent);
+                } catch (Exception e) {
+                    mUploadMessage = null;
+                    Toast.makeText(MainActivity.this, "Cannot open file chooser", Toast.LENGTH_LONG).show();
+                    return false;
+                }
+                return true;
+            }
+        });
+
+        // --- WebViewClient per cronologia e download automatico FitarcoPass.pdf ---
         webview1.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                // Save the current URL after the page has finished loading
+
+                // Salva cronologia
                 SharedPreferences prefs = getPreferences(Context.MODE_PRIVATE);
                 SharedPreferences.Editor editor = prefs.edit();
                 editor.putString(LAST_VISITED_URL_KEY, url);
                 editor.apply();
+
+                // Se siamo sulla pagina index.php con Matricola, forza download del PDF reale
+                if (url.contains("index.php?Matricola")) {
+                    String pdfUrl = url.replace("index.php?", "index.php?SaveFile&");
+
+                    // Avvia download del PDF
+                    String cookies = CookieManager.getInstance().getCookie(pdfUrl);
+                    DownloadManager.Request request = new DownloadManager.Request(Uri.parse(pdfUrl));
+                    request.addRequestHeader("Cookie", cookies);
+                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+
+                    // Nome fisso FitarcoPass.pdf
+                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "FitarcoPass.pdf");
+
+                    DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                    dm.enqueue(request);
+
+                    Toast.makeText(MainActivity.this, "Download FitarcoPass.pdf started...", Toast.LENGTH_SHORT).show();
+                }
             }
         });
 
-        // Load the last visited URL, or the initial login page if none is saved
+        // --- DownloadListener generico per altri file ---
+        webview1.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+            String cookies = CookieManager.getInstance().getCookie(url);
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            request.addRequestHeader("Cookie", cookies);
+            request.addRequestHeader("User-Agent", userAgent);
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
+                    "FitarcoPass.pdf");
+            DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            dm.enqueue(request);
+            Toast.makeText(getApplicationContext(), "Download started...", Toast.LENGTH_SHORT).show();
+        });
+
+        // --- Carica ultima pagina visitata ---
         SharedPreferences prefs = getPreferences(Context.MODE_PRIVATE);
         String lastUrl = prefs.getString(LAST_VISITED_URL_KEY, INITIAL_URL);
         webview1.loadUrl(lastUrl);
     }
 
+    // --- Pulsante indietro ---
+    @Override
+    public void onBackPressed() {
+        if (webview1.canGoBack()) {
+            webview1.goBack();
+        } else {
+            super.onBackPressed();
+        }
+    }
+
     @Override
     protected void onPause() {
         super.onPause();
-        // Flush cookies to storage when the activity is paused. This is the most reliable place.
         CookieManager.getInstance().flush();
     }
 }
