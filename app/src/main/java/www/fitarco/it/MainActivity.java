@@ -36,7 +36,7 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // --- Launcher per selezione file ---
+
         fileChooserLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 new ActivityResultCallback<ActivityResult>() {
@@ -66,7 +66,7 @@ public class MainActivity extends AppCompatActivity {
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webview1, true);
 
-        // --- WebChromeClient per upload file ---
+ 
         webview1.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
@@ -89,29 +89,26 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // --- WebViewClient per cronologia e download automatico FitarcoPass.pdf ---
+
         webview1.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
 
-                // Salva cronologia
                 SharedPreferences prefs = getPreferences(Context.MODE_PRIVATE);
                 SharedPreferences.Editor editor = prefs.edit();
                 editor.putString(LAST_VISITED_URL_KEY, url);
                 editor.apply();
 
-                // Se siamo sulla pagina index.php con Matricola, forza download del PDF reale
                 if (url.contains("index.php?Matricola")) {
                     String pdfUrl = url.replace("index.php?", "index.php?SaveFile&");
 
-                    // Avvia download del PDF
                     String cookies = CookieManager.getInstance().getCookie(pdfUrl);
                     DownloadManager.Request request = new DownloadManager.Request(Uri.parse(pdfUrl));
                     request.addRequestHeader("Cookie", cookies);
                     request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
 
-                    // Nome fisso FitarcoPass.pdf
+                    
                     request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "FitarcoPass.pdf");
 
                     DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
@@ -122,7 +119,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // --- DownloadListener generico per altri file ---
+    
         webview1.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
             String cookies = CookieManager.getInstance().getCookie(url);
             DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
@@ -136,13 +133,13 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(getApplicationContext(), "Download started...", Toast.LENGTH_SHORT).show();
         });
 
-        // --- Carica ultima pagina visitata ---
+   
         SharedPreferences prefs = getPreferences(Context.MODE_PRIVATE);
         String lastUrl = prefs.getString(LAST_VISITED_URL_KEY, INITIAL_URL);
         webview1.loadUrl(lastUrl);
     }
 
-    // --- Pulsante indietro ---
+
     @Override
     public void onBackPressed() {
         if (webview1.canGoBack()) {
